@@ -48,7 +48,7 @@ This page has helpful examples for how the Census API works: <https://www.census
 Paste the long string of numbers and letters emailed to you by The Census Bureau API Team after the "&key=" below
 
 ```{r}
-key = "&key=a834029996fccc1b2766431ebcd51332c2c6e0d0"
+key = "&key="
 
 ```
 

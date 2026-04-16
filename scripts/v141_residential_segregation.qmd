@@ -1,0 +1,211 @@
+---
+title: "v141 residential segregation"
+author: "how"
+format: html
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# about
+
+## Basic information
+
+-   Index of dissimilarity where higher values indicate greater residential segregation between Black and White county residents.
+
+## Raw data access
+
+We access data using the tidycensus R package. Data come from ACS tables B11002 (all), B11002A (white), and B11002B (black) at the census tract level of the 2019-2023 ACS 5-year estimates. These data are accessible here: https://data.census.gov/table/ACSDT1Y2022.B11002
+
+# import packages
+
+```{r}
+library(tidyverse)
+library(haven)
+library(tidycensus)
+```
+
+# standard county and state fips
+
+-   The final dataset will need to be aligned with standard FIPS codes and to include all counties and states.
+
+```{r }
+fips <-  bind_rows(
+  read_sas("../inputs/county_fips_with_ct_old.sas7bdat"),
+  read_sas( "../inputs/state_fips.sas7bdat")) %>% 
+  arrange(statecode, countycode) %>% 
+  glimpse()
+
+```
+
+# load data using the tidycensus package
+
+```{r}
+# Variables
+vars <- c(
+  "B11002_001E",   # Total households
+  "B11002A_001E",  # White alone, not Hispanic
+  "B11002B_001E"   # Black or African American alone
+)
+
+states <- unique(fips_codes$state)[1:51]  # state abbreviations from tidycensus (DC included)
+
+tract_data <- map_dfr(states, function(st) {
+  get_acs(
+    geography = "tract",
+    variables = vars,
+    year = 2023,
+    survey = "acs5",
+    output = "wide",
+    state = st
+  )
+})
+
+
+tract_data = tract_data %>% 
+  mutate(statecode = substr(GEOID, 1,2), 
+         countycode = substr(GEOID, 3,5), 
+         bi = B11002B_001E, #tract level black pop
+         wi = B11002A_001E, #tract level white pop 
+         toti = B11002_001E) 
+```
+
+calculate county level totals (we do this instead of pulling county level data directly from ACS since we found a discrepancy between county and tract data in 2025)
+
+```{r}
+county_level = tract_data %>% group_by(statecode, countycode) %>% 
+  summarize(btot = sum(bi, na.rm = TRUE), 
+            wtot = sum(wi, na.rm = TRUE), 
+            tot = sum(toti, na.rm = TRUE))
+```
+
+add the ct crosswalk (for 2025 only)
+
+```{r}
+#load the ct tract crosswalk 
+cttract = haven::read_sas(here("inputs/ct_tract_crosswalk.sas7bdat"))
+
+ctonly = tract_data %>% filter(statecode == "09") %>% 
+  mutate(GEOID = stringr::str_pad(GEOID, width =11,side = "left", pad = "0"))
+
+ctwalk = merge(cttract, ctonly, by.x = "tract_fipscode_2022",
+               by.y = "GEOID")
+
+ctwalk = ctwalk %>% select(statecode, countycode, bi, wi, toti) %>% 
+  group_by(countycode) %>% 
+  mutate(btot = sum(bi, na.rm = TRUE), 
+         wtot = sum(wi, na.rm = TRUE))
+
+#ctwalk now contains the corrected ct fipscodes for 2025 release 
+
+
+```
+
+put all the data together
+
+```{r}
+data <- tract_data %>% 
+  left_join(
+    county_level %>% select(statecode, countycode, btot, wtot),
+    by = c("statecode", "countycode")
+  ) 
+
+
+data_ct = data %>% filter(statecode != "09") %>% 
+  bind_rows(ctwalk)
+
+# check that there are no geoids in `data` but not in `data_ct`
+geoids_not_in_data_ct <- data_ct %>%
+  anti_join(data, by = "GEOID") %>%
+  select(GEOID) %>%
+  distinct()
+```
+
+# calculate the index of dissimilarity for each state
+
+```{r}
+
+# get state totals first 
+# note that no suppression is applied!! 
+s1 = data_ct %>% 
+  filter(countycode != "000") %>% 
+  group_by(statecode) %>% 
+  summarize(
+    B = sum(bi),  # Total black population in state
+    W = sum(wi), # Total white population in state
+    bi_B = bi / B,  # Proportion of black population in tract
+    wi_W = wi / W,  # Proportion of white population in tract
+    abs_diff = abs(bi_B - wi_W))  # Set to NA if missing
+
+states = s1 %>% group_by(statecode) %>% 
+  summarize(
+    rawvalue = 50 * sum(abs_diff, na.rm = TRUE))  # (1/2) SUM|(bi/B) - (wi/W)| * 100)
+states$countycode = "000"
+
+```
+
+# Calculate the index of dissimilarity components for each tract for countycalcs
+
+```{r}
+
+c1 <- data_ct %>% filter(countycode != "000") %>% 
+  mutate(
+    B = btot,  # Total black population in county
+    W = wtot,  # Total white population in county
+    bi_B = bi / B,  # Proportion of black population in tract
+    wi_W = wi / W,  # Proportion of white population in tract
+    abs_diff = if_else(is.na(bi_B) | is.na(wi_W), NA_real_, abs(bi_B - wi_W))  # Set to NA if missing
+  )
+
+
+# Sum the components by county and calculate the index
+county <- c1 %>%
+  group_by(statecode, countycode) %>% 
+  filter(B>=100) %>% 
+  summarize(
+   rawvalue = 50 * sum(abs_diff))  # (1/2) SUM|(bi/B) - (wi/W)| * 100)
+
+county$rawvalue = ifelse(county$rawvalue == 0, NA, county$rawvalue)
+
+
+
+```
+
+# put state and county together and add the fipscodes back in
+
+```{r}
+sctot = dplyr::bind_rows(states, county) 
+
+scall = merge(fips, sctot, by= c("statecode", "countycode"), all.x = TRUE)
+
+scall <- scall %>%
+  mutate(
+    # Calculate the median for countycode = 000
+    rawvalue = if_else((statecode == "00" & countycode == "000"),
+      median(rawvalue[countycode == "000"], na.rm = TRUE),
+      rawvalue
+    )
+  )
+
+
+```
+
+# suppress ulster and suffolk counties due to issues with these data in 2025:
+
+fipscodes 36103 and 36111
+
+```{r}
+scall = scall %>% mutate(
+  v141_rawvalue = if_else((statecode == "36" & countycode %in% c("103", "111")), 
+                     NA, rawvalue)
+)
+```
+
+# save data
+
+```{r}
+save_data(scall, "v141")
+```
