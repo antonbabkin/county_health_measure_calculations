@@ -1,0 +1,376 @@
+---
+title: "ACS variables"
+format:
+  html:
+    date: today
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    code-fold: true
+    code-overflow: wrap
+---
+
+# top
+
+
+
+```{r}
+library(logger)
+library(tidyverse)
+
+
+source("R/util.R", local = (util <- new.env()))
+
+log_threshold(DEBUG)
+
+
+ipath <- list(
+  # https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/5YRData.zip
+  acs_2023_5_zip = "data/raw/acs_2023_5/5YRData.zip"
+)
+
+opath <- list(
+)
+
+
+```
+
+
+## summary tables
+
+```{r}
+table_file_names <- unzip(ipath$acs_2023_5_zip, list = TRUE)
+table_file_name <- table_file_names %>%
+  filter(str_detect(Name, "b15001")) %>%
+  pull(Name)
+stopifnot(length(table_file_name) == 1)
+
+df_table <- read_delim(
+  unz(ipath$acs_2023_5_zip, table_file_name), 
+  delim = "|",
+  col_types = list(GEO_ID = "c", .default = "d")
+)
+
+df_table %>% glimpse()
+
+```
+
+
+
+# v069 - SOME COLLEGE
+
+numerator =	Total number of individuals ages 25-44 with at least some post-secondary education
+denominator	= Total number of individuals ages 25-44.
+raw_value	= Percentage of adults age 25-44 with some post-secondary education
+
+## var list
+
+```{r}
+var_ls_069 <- c(
+  'B15001_E015', 'B15001_E016', 'B15001_E017', 'B15001_E018', 'B15001_E023',
+  'B15001_E024', 'B15001_E025', 'B15001_E026',
+  'B15001_E056', 'B15001_E057', 'B15001_E058', 'B15001_E059', 'B15001_E064',
+  'B15001_E065', 'B15001_E066', 'B15001_E067',
+  'B15001_E011', 'B15001_E019', 'B15001_E052', 'B15001_E060',
+  'B15001_M015', 'B15001_M016', 'B15001_M017', 'B15001_M018', 'B15001_M023',
+  'B15001_M024', 'B15001_M025', 'B15001_M026',
+  'B15001_M056', 'B15001_M057', 'B15001_M058', 'B15001_M059', 'B15001_M064',
+  'B15001_M065', 'B15001_M066', 'B15001_M067',
+  'B15001_M011', 'B15001_M019', 'B15001_M052', 'B15001_M060'
+)
+
+
+
+```
+
+
+
+
+
+
+# v168 - HIGH SCHOOL COMPLETION
+
+numerator =	# Completed High School (Adults age 25 and over with a high school diploma or equivalent)
+denominator =	Population	(Adults age 25 and over)
+raw_value	= % Completed High School
+
+## var list
+```{r}
+var_ls_168 <- c('S1501_C01_014E', 'S1501_C01_014M',
+                'S1501_C01_006E', 'S1501_C01_006M')
+```
+
+
+```{r}
+table_file_names %>%
+  pull(Name) %>%
+  basename() %>%
+  str_extract("-(.+)\\.dat", group = 1) %>%
+  str_sub(1, 2) %>% table()
+```
+
+## process data
+```{r}
+hs_completion <- acs5 %>% 
+  select(1:3, all_of(var_ls_168)) %>% 
+  rename(numerator = S1501_C01_014E, 
+         denominator = S1501_C01_006E) %>% 
+  mutate(se_num_square = S1501_C01_014M**2,
+         se_denom_square = S1501_C01_006M**2) %>% 
+  glimpse()
+
+hs_completion_2 <- hs_completion %>% 
+  compute_se_ci()
+
+standard_cols <- c('statecode', 'countycode', 'numerator', 'denominator',
+                   'rawvalue', 'cilow', 'cihigh', 'sourceflag')
+
+hs_completion_3 <- hs_completion_2 %>% 
+  select(all_of(standard_cols))
+```
+
+
+# tidycensus test
+
+```{r}
+.libPaths()
+
+```
+
+```{r}
+
+library(tidycensus)
+
+
+
+
+```
+
+
+```{r}
+x <- get_acs(geography = "county", 
+              variables = c(medincome = "B19013_001"), 
+              state = "VT", 
+              year = 2024)
+x
+
+```
+
+
+```{r}
+acs5_2024 <- load_variables(2024, "acs5", cache = TRUE)
+acs5s_2024 <- load_variables(2024, "acs5/subject", cache = TRUE)
+
+```
+
+
+```{r}
+var_ls_166 <- c('S2801_C01_014E', 'S2801_C01_014M',
+                'S2801_C01_001E', 'S2801_C01_001M')
+
+x <- get_acs(geography = "county", 
+              variables = var_ls_166, 
+              state = "VT", 
+              year = 2024)         
+
+acs5s_2024
+x %>%
+  left_join(acs5s_2024, join_by(variable == name))
+
+```
+
+
+# Census API
+
+
+```{r}
+
+
+```
+
+
+# v082	- Children in single-parent households	
+
+```{r}
+
+library(tidyverse)
+
+compute_se_ci <- function(df){
+  df %>% 
+    mutate(rawvalue = numerator/denominator,
+       se_num = (sqrt(se_num_square))/1.645,
+       se_denom = (sqrt(se_denom_square))/1.645) %>% 
+  mutate(se_test = se_num^2 - (rawvalue^2 * se_denom^2)) %>% 
+  mutate(se_pct = case_when(
+    se_test>=0 ~ sqrt(se_num**2 - (rawvalue^2 * se_denom^2))/denominator,
+    se_test< 0 ~ sqrt(se_num**2 + (rawvalue^2 * se_denom^2))/denominator
+  )) %>% 
+  mutate(cilow = rawvalue - se_pct*1.96, 
+         cihigh = rawvalue + se_pct*1.96,
+         sourceflag = NA_real_)
+}
+
+apply_suppression <-  function(df){
+  df %>% 
+  mutate(
+    cilow = case_when(cilow < 0 ~ 0,
+                      is.na(cihigh) ~ NA_real_,
+                      TRUE ~ cilow),
+    cihigh = case_when(cihigh > 1 ~  1, 
+                       is.na(cilow) ~ NA_real_,
+                       TRUE ~ cihigh)
+  )
+}
+
+standard_cols <- c('statecode', 'countycode', 'numerator', 'denominator',
+                   'rawvalue', 'cilow', 'cihigh', 'sourceflag')
+
+
+standardize_col_names <- function(df, col_prefix){
+  res <- df %>% 
+    rename(
+           !!(paste0(col_prefix, "_rawvalue")) := rawvalue, 
+           !!(paste0(col_prefix, "_numerator")) := numerator,
+           !!(paste0(col_prefix, "_denominator")) := denominator,
+           !!(paste0(col_prefix, "_cilow")) := cilow,
+           !!(paste0(col_prefix, "_cihigh")) := cihigh,
+           !!(paste0(col_prefix, "_sourceflag")) := sourceflag
+           )
+  return(res)
+}
+
+var_ls_082 <- c('B09005_001E', 'B09005_004E', 'B09005_005E', 
+                'B09005_001M', 'B09005_004M', 'B09005_005M')
+
+proc_wide <- function(wide_df) {
+  wide_df %>%
+    mutate(numerator = B09005_004E + B09005_005E, 
+          denominator = B09005_001E,
+          se_num_square = B09005_004M**2 + B09005_005M**2,
+          se_denom_square = B09005_001M**2) %>% 
+    compute_se_ci() %>%
+    apply_suppression() %>%
+    select(all_of(standard_cols)) %>%
+    standardize_col_names("v082")
+}
+
+v082 <- list()
+
+```
+
+
+## CHRR
+
+
+```{r}
+
+v082$chrr <- read_csv("measure_datasets/v082_r2025.csv")
+
+```
+
+## tidycensus
+
+
+```{r}
+
+library(tidycensus)
+
+raw_tc <- get_acs(geography = "county", variables = var_ls_082, year = 2023)
+
+wide_tc <- raw_tc %>%
+  mutate(statecode = str_sub(GEOID, 1, 2), countycode = str_sub(GEOID, 3, 5)) %>%
+  select(statecode, countycode, variable, E = estimate, M = moe) %>%
+  pivot_longer(c(E, M)) %>%
+  mutate(name = paste0(variable, name)) %>%
+  pivot_wider(id_cols = c(statecode, countycode))
+
+
+v082$tc <- wide_tc %>%
+  proc_wide()
+
+```
+
+
+## Census API
+
+```{r}
+library(httr2)
+
+url <- "https://api.census.gov/data/2023/acs/acs5?get=group(B09005)&for=county:*"
+
+raw_api <- request(url) %>%
+  req_perform() %>%
+  resp_body_json(simplifyVector = FALSE)
+
+wide_api <- raw_api[-1] %>%
+  lapply(\(x) setNames(x, raw[[1]])) %>%
+  bind_rows() %>%
+  select(statecode = state, countycode = county, all_of(var_ls_082)) %>%
+  type_convert()
+
+v082$api <- wide_api %>%
+  proc_wide()
+
+
+```
+
+## FTP summary file
+
+
+```{r}
+raw_ftp <- util$get_file(
+    "data/raw/acsdt5y2023-b09005.dat",
+    "https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b09005.dat"
+  ) %>%
+  read_delim(
+    delim = "|",
+    col_types = list(GEO_ID = "c", .default = "d")
+  )
+
+wide_ftp <- raw_ftp %>%
+  filter(str_sub(GEO_ID, 1, 3) == "050") %>%
+  mutate(statecode = str_sub(GEO_ID, 10, 11), countycode = str_sub(GEO_ID, 12, 14)) %>%
+  # B09005_E001 -> B09005_001E
+  rename_with(
+    \(x) paste0(substr(x, 1, 7), substr(x, 9, 11), substr(x, 8, 8)),
+    .cols = starts_with("B09005")) %>%
+  select(statecode, countycode, all_of(var_ls_082))
+
+v082$ftp <- wide_ftp %>%
+  proc_wide()
+
+```
+
+## compare
+
+```{r}
+v082_df <- v082 %>%
+  bind_rows(.id = "method") %>%
+  filter(countycode != "000")
+  
+v082_df %>%
+  arrange(statecode, countycode, method)
+
+v082_var <- v082_df %>%
+  summarize(across(where(is.numeric), \(x) max(x) - min(x)), .by = c(statecode, countycode))
+  
+v082_var %>%
+  skimr::skim()
+
+# sus
+v082_var %>%
+  filter(if_any(where(is.numeric), \(x) x > 0.1)) %>%
+  select(statecode, countycode) %>%
+  left_join(v082_df)
+
+
+```
+
+
+# formula
+
+
+```{r}
+
+```
+

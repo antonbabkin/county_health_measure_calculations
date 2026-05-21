@@ -9,3 +9,9 @@ scripts/v127*
 scripts/v129*
 temp/
 raw_data/HIFLD/googledrive
+data/
+
+
+# R configuration and environment
+.Rprofile
+renv/
