@@ -36,6 +36,28 @@ opath <- list(
 ```
 
 
+# data
+
+Nation
+api.census.gov/data/2022/acs/acs1/profile?get=NAME,DP05_0001E&ucgid=0100000US&key=KEY
+
+All states
+api.census.gov/data/2022/acs/acs1/profile?get=NAME,DP05_0001E&ucgid=pseudo(0100000US$0400000)&key=KEY
+
+All counties
+api.census.gov/data/2022/acs/acs1/profile?get=NAME,DP05_0001E&ucgid=pseudo(0100000US$0500000)&key=KEY
+
+```{r}
+source("R/acs.R")
+
+
+x <- get_raw_table(2023, "B15001")
+
+glimpse(x)
+```
+
+
+
 ## summary tables
 
 ```{r}
@@ -261,6 +283,11 @@ v082 <- list()
 
 ## CHRR
 
+```{r}
+v082$chrr %>%
+  filter(countycode == "000", statecode != "00") %>%
+  tail()
+```
 
 ```{r}
 

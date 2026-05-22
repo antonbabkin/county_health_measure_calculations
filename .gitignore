@@ -15,3 +15,6 @@ data/
 # R configuration and environment
 .Rprofile
 renv/
+
+# environment file with secrets
+.Renviron
