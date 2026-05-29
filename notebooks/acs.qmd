@@ -10,73 +10,165 @@ format:
     code-overflow: wrap
 ---
 
-# top
+
+Pilot the calculation of Homeownership (v153), Severe Housing Problems (v136), Some College (v069), High School Completion (v168), Residential Segregation – Black/White (v141), Disconnected Youth (v149), % Not Proficient in English (v059), Children in Single-Parent Households (v082), Driving Alone to Work (v067), Long Commute – Driving Alone (v137) 
+
+# Completion status
+
+##  % Not Proficient in English (v059)
+- Diff in CI, only NA vs 0/1?
+
+## Driving Alone to Work (v067)
+- Calc by race not implemented
+
+## Some College (v069)
+- Diff in CI, only NA vs 0/1?
+
+## Children in Single-Parent Households (v082)
+- Complete, numerically equal without zero-max rule
+
+## Severe Housing Problems (v136)
+- TODO from scripts/v136_severe_housing_problems.Rmd
+- Uses data from HUD, skipping for now.
+
+## Long Commute – Driving Alone (v137)
+- Complete, numerically equal without zero-max rule.
+- No ratio calculation, proportions already in raw data.
+- Wrong denominator value in source code (`denominator = S0802_C01_001E`, total)? Should be `S0802_C02_001E`, drove alone.
+
+##  Residential Segregation – Black/White (v141)
+- TODO from scripts/v141_residential_segregation.qmd
+- Non-standard ACS, columns from three separate tables (Total, White and Black)
+- Aggregation to counties from tracts
+
+## Disconnected Youth (v149)
+- Complete, numerically equal without zero-max rule
+- Special case handling, maybe include in general function?
+
+## Homeownership (v153)
+- Complete, numerically equal
+
+## High School Completion (v168)
+- Diff in CI, only NA vs 0/1?
 
 
+# Libraries
 
 ```{r}
-library(logger)
+
 library(tidyverse)
 
+source("R/acs.R")
 
-source("R/util.R", local = (util <- new.env()))
-
-log_threshold(DEBUG)
-
-
-ipath <- list(
-  # https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/5YRData.zip
-  acs_2023_5_zip = "data/raw/acs_2023_5/5YRData.zip"
-)
-
-opath <- list(
-)
-
+ACS_YEAR <- 2023
 
 ```
 
 
-# data
+# Raw data
 
-Nation
-api.census.gov/data/2022/acs/acs1/profile?get=NAME,DP05_0001E&ucgid=0100000US&key=KEY
-
-All states
-api.census.gov/data/2022/acs/acs1/profile?get=NAME,DP05_0001E&ucgid=pseudo(0100000US$0400000)&key=KEY
-
-All counties
-api.census.gov/data/2022/acs/acs1/profile?get=NAME,DP05_0001E&ucgid=pseudo(0100000US$0500000)&key=KEY
 
 ```{r}
-source("R/acs.R")
-
 
 x <- get_raw_table(2023, "B15001")
 
-glimpse(x)
+x %>% head()
+
+
 ```
 
 
+# v059 - % Not Proficient in English
 
-## summary tables
+
+Numerator:
+
+The numerator is the number of people aged 5 and over who self-reported they are not proficient in speaking English (speak English either “not well” or “not at all”).
+
+Denominator:
+
+The denominator is the total county population aged 5 and over.
+
 
 ```{r}
-table_file_names <- unzip(ipath$acs_2023_5_zip, list = TRUE)
-table_file_name <- table_file_names %>%
-  filter(str_detect(Name, "b15001")) %>%
-  pull(Name)
-stopifnot(length(table_file_name) == 1)
 
-df_table <- read_delim(
-  unz(ipath$acs_2023_5_zip, table_file_name), 
-  delim = "|",
-  col_types = list(GEO_ID = "c", .default = "d")
-)
+numerator <- expr(B16005_007E + B16005_012E + B16005_008E + B16005_013E + B16005_017E + B16005_022E + B16005_018E + B16005_023E + B16005_029E + B16005_030E + B16005_034E + B16005_035E + B16005_039E + B16005_040E + B16005_044E + B16005_045E)
+denominator <- expr(B16005_001E)
 
-df_table %>% glimpse()
+x <- get_raw_table(2023, "B16005") %>%
+  standardize_fips() %>% 
+  add_flag_CT() %>%
+  calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator, zero_max = FALSE) %>%
+  apply_suppression() %>%
+  mutate(sourceflag = NA) %>%
+  add_col_prefix("v059") %>%
+  arrange(statecode, countycode)
+
+v059 <- x %>%
+  select(statecode, countycode, starts_with("v059"))
 
 ```
 
+```{r}
+x1 <- read_csv("measure_datasets/v059_r2025.csv") %>%
+  arrange(statecode, countycode)
+
+waldo::compare(x1, v059, tolerance = 1e-4, list_as_map = TRUE)
+
+```
+
+
+# v067 - PERCENT OF LABOR FORCE THAT DRIVES ALONE TO WORK
+
+numerator =	number of workers who commute alone to work via car, truck, or van.
+denominator	= total workforce
+raw_value	= Percentage of workers who drive alone to work
+
+```{r}
+
+numerator <- expr(B08301_003E)
+denominator <- expr(B08301_001E)
+
+x <- get_raw_table(2023, "B08301") %>%
+  standardize_fips() %>% 
+  add_flag_CT() %>%
+  calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator) %>%
+  apply_suppression() %>%
+  mutate(sourceflag = NA) %>%
+  add_col_prefix("v067")
+
+v067 <- x %>%
+  select(statecode, countycode, starts_with("v067"))
+
+```
+
+```{r}
+x1 <- read_csv("measure_datasets/v067_r2025.csv") %>%
+  arrange(statecode, countycode)
+
+waldo::compare(x1, v067, tolerance = 1e-4, list_as_map = TRUE)
+
+```
+
+
+## v067_other - Driving Alone to Work
+
+`race_aian`	AIAN	Percentage of American Indian and Alaska Native workers who drive alone to work	
+`race_asian`	Asian	Percentage of Asian/Pacific Islander workers who drive alone to work
+`race_black`	Black	Percentage of Black workers who drive alone to work	Percentage
+`race_hispanic`	Hispanic	Percentage of Hispanic workers who drive alone to work
+`race_white`	white	Percentage of non-Hispanic white workers who drive alone to work
+
+
+```{r}
+var_ls_067_other <- c(
+  'B08505B_002E', 'B08505H_002E', 'B08505I_002E', 'B08505D_002E', 'B08505E_002E',
+  'B08505C_002E', 'B08505B_001E', 'B08505H_001E', 'B08505I_001E', 'B08505D_001E',
+  'B08505E_001E', 'B08505C_001E', 'B08505B_002M', 'B08505H_002M', 'B08505I_002M',
+  'B08505D_002M', 'B08505E_002M', 'B08505C_002M', 'B08505B_001M', 'B08505H_001M',
+  'B08505I_001M', 'B08505D_001M', 'B08505E_001M', 'B08505C_001M'
+)
+```
 
 
 # v069 - SOME COLLEGE
@@ -85,29 +177,345 @@ numerator =	Total number of individuals ages 25-44 with at least some post-secon
 denominator	= Total number of individuals ages 25-44.
 raw_value	= Percentage of adults age 25-44 with some post-secondary education
 
-## var list
+```{r}
+
+numerator <- expr(B15001_015E + B15001_016E + B15001_017E + B15001_018E + B15001_023E + 
+        B15001_024E + B15001_025E + B15001_026E + B15001_056E + B15001_057E + B15001_058E +  
+        B15001_059E + B15001_064E + B15001_065E + B15001_066E + B15001_067E)
+denominator <- expr(B15001_011E + B15001_019E + B15001_052E + B15001_060E)
+
+x <- get_raw_table(2023, "B15001") %>%
+  standardize_fips() %>% 
+  add_flag_CT() %>%
+  calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator, zero_max = FALSE) %>%
+  # calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator) %>%
+  apply_suppression() %>%
+  mutate(sourceflag = NA) %>%
+  add_col_prefix("v069")
+
+v069 <- x %>%
+  select(statecode, countycode, starts_with("v069"))
+
+```
+
 
 ```{r}
-var_ls_069 <- c(
-  'B15001_E015', 'B15001_E016', 'B15001_E017', 'B15001_E018', 'B15001_E023',
-  'B15001_E024', 'B15001_E025', 'B15001_E026',
-  'B15001_E056', 'B15001_E057', 'B15001_E058', 'B15001_E059', 'B15001_E064',
-  'B15001_E065', 'B15001_E066', 'B15001_E067',
-  'B15001_E011', 'B15001_E019', 'B15001_E052', 'B15001_E060',
-  'B15001_M015', 'B15001_M016', 'B15001_M017', 'B15001_M018', 'B15001_M023',
-  'B15001_M024', 'B15001_M025', 'B15001_M026',
-  'B15001_M056', 'B15001_M057', 'B15001_M058', 'B15001_M059', 'B15001_M064',
-  'B15001_M065', 'B15001_M066', 'B15001_M067',
-  'B15001_M011', 'B15001_M019', 'B15001_M052', 'B15001_M060'
-)
+
+x1 <- read_csv("measure_datasets/v069_r2025.csv") %>%
+  arrange(statecode, countycode)
+
+waldo::compare(x1, v069, tolerance = 1e-4, list_as_map = TRUE)
+
+```
+
+## track differences
+
+```{r}
+cmp_vars <- c("statecode", "countycode", "numerator", "denominator", "rawvalue", "cilow", "cihigh")
+x0 <- read_csv("measure_datasets/v069_r2025.csv") %>%
+  arrange(statecode, countycode) %>%
+  rename_with(\(x) str_remove(x, "^v..._")) %>%
+  select(all_of(cmp_vars))
+
+numerator <- expr(B15001_015E + B15001_016E + B15001_017E + B15001_018E + B15001_023E + 
+        B15001_024E + B15001_025E + B15001_026E + B15001_056E + B15001_057E + B15001_058E +  
+        B15001_059E + B15001_064E + B15001_065E + B15001_066E + B15001_067E)
+denominator <- expr(B15001_011E + B15001_019E + B15001_052E + B15001_060E)
+
+x1 <- get_raw_table(2023, "B15001") %>%
+  standardize_fips() %>% 
+  calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator, zero_max = FALSE)
+
+cmp <- cmp_vars[-(1:2)] %>%
+  set_names() %>%
+  map(\(var) {
+    waldo::compare(x0[[var]], x1[[var]], tolerance = 1e-4)
+  })
+
+cmp$cilow
+
+almost_equal <- function(x, y, rel_tol = 0.001, abs_tol = Inf) {
+  abs_dif <- abs(x - y)
+  rel_dif <- ifelse(x == 0, 0, abs_dif / abs((x + y) / 2))
+  !is.na(x) & !is.na(y) & abs_dif <= abs_tol & rel_dif <= rel_tol
+}
+
+x <- full_join(
+  select(x0, statecode, countycode, v0 = cilow),
+  select(x1, statecode, countycode, v1 = cilow),
+  by = c("statecode", "countycode")
+) %>%
+  filter(!almost_equal(v0, v1))
+
+x1e <- x1 %>%
+  right_join(x) %>%
+  select(!starts_with("B15001"))
 
 
+
+```
+
+```{r}
+
+```
+
+
+# v082 - SINGLE-PARENT HOUSEHOLDS
+
+numerator =	Number of children that live in single-parent households
+denominator	= Number of children in households
+raw_value	= Percentage of children that live in single-parent households
+
+
+```{r}
+
+numerator <- expr(B09005_004E + B09005_005E)
+denominator <- expr(B09005_001E)
+
+x <- get_raw_table(2023, "B09005") %>%
+  standardize_fips() %>% 
+  add_flag_CT() %>%
+  calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator) %>%
+  # calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator, zero_max = FALSE) %>%
+  apply_suppression() %>%
+  # repeating original edge-case code, might want to generalize to work with any zero values
+  # setting '15005' to missing because numerator and denominator are 0 which isn't helpful
+  mutate(across(c(cilow, cihigh), ~if_else(is.nan(rawvalue), NA, .))) %>% 
+  mutate(numerator = if_else((statecode=="15" & countycode=="005"), NA, numerator),
+         denominator = if_else((statecode=="15" & countycode=="005"), NA, denominator),
+         cilow = if_else((statecode=="15" & countycode=="005"), NA, cilow),
+         cihigh = if_else((statecode=="15" & countycode=="005"), NA, cihigh)) %>% 
+  mutate(sourceflag = NA) %>%
+  add_col_prefix("v082")
+
+v082 <- x %>%
+  select(statecode, countycode, starts_with("v082"))
+
+```
+
+
+```{r}
+
+x1 <- read_csv("measure_datasets/v082_r2025.csv") %>%
+  arrange(statecode, countycode)
+
+waldo::compare(x1, v082, tolerance = 1e-4, list_as_map = TRUE)
+
+```
+
+
+# v136 - Severe Housing Problems
+
+TODO
+
+
+# v137 - LONG COMMUTE - DRIVING ALONE 
+
+numerator =	number of workers who drive alone (via car, truck, or van) for more than 30 minutes during their commute
+denominator	= number of workers who drive alone (via car, truck, or van) during their commute
+raw_value	= Among workers who commute in their car alone, the percentage that commute more than 30 minutes
+
+
+```{r}
+tabid <- "S0802"
+cat("National HTML table:", data_census_gov_url(ACS_YEAR, tabid))
+
+denominator <- expr(S0802_C02_001E)
+rawvalue <- expr(S0802_C02_086E + S0802_C02_087E + S0802_C02_088E + S0802_C02_089E)
+
+x <- get_raw_table(ACS_YEAR, tabid) %>%
+  standardize_fips() %>% 
+  add_flag_CT() %>%
+  # no ratio, using general function to handle variance calc
+  # calc_acs_ratio(num_expr = !!rawvalue, den_expr = !!denominator, zero_max = FALSE) %>%
+  calc_acs_ratio(num_expr = !!rawvalue, den_expr = !!denominator) %>%
+  mutate(
+    rawvalue = numerator / 100,
+    numerator = NA,
+    var = var_num / 10000,
+    var_num = NA,
+    var_prop = NA,
+    moe = sqrt(var) * 1.96,
+    cilow = rawvalue - moe, 
+    cihigh = rawvalue + moe
+  ) %>%
+  apply_suppression() %>%
+  mutate(sourceflag = NA) %>%
+  add_col_prefix("v137")
+
+v137 <- x %>%
+  select(statecode, countycode, starts_with("v137"))
+
+```
+
+
+```{r}
+
+x1 <- read_csv("measure_datasets/v137_r2025.csv") %>%
+  arrange(statecode, countycode) %>%
+  # old uses wrong denominator
+  select(-v137_denominator)
+
+waldo::compare(x1, v137, tolerance = 1e-4, list_as_map = TRUE)
 
 ```
 
 
 
 
+## var list
+```{r}
+
+```
+
+## process data
+```{r}
+longcommute <- acs5 %>% 
+  select(1:3, all_of(var_ls_137)) %>% 
+  rename(denominator = S0802_C01_001E) %>% 
+  glimpse()
+
+longcommute_2 <- longcommute %>% 
+  mutate(
+    numerator = NA_real_,
+    rawvalue = S0802_C02_086E + S0802_C02_087E + S0802_C02_088E + 
+           S0802_C02_089E,
+    se = (sqrt(S0802_C02_086M**2 + S0802_C02_087M**2 + S0802_C02_088M**2 +
+                    S0802_C02_089M**2))*1.96/1.645
+       ) %>% 
+  mutate(cilow = rawvalue - se, 
+         cihigh = rawvalue + se,
+         sourceflag = NA_real_)
+
+standard_cols <- c('statecode', 'countycode', 'numerator', 'denominator',
+                   'rawvalue', 'cilow', 'cihigh', 'sourceflag')
+
+longcommute_3 <- longcommute_2 %>% 
+  select(all_of(standard_cols)) %>% 
+  mutate(across(c(rawvalue, cilow, cihigh), ~ .x/100) ) %>% 
+  glimpse()
+```
+
+## suppression + standardize column names
+
+```{r}
+longcommute_4 <- longcommute_3 %>%
+  apply_suppression() %>% 
+  # standard column names
+  standardize_col_names("v137") %>% 
+  glimpse()
+```
+
+## standardize fips and add flag_CT
+
+```{r}
+v137 <- longcommute_4 %>% 
+  standardize_fips() %>% 
+  add_flag_CT(vnum = "v137", old="U", new = "A")
+
+v137
+```
+
+## save 
+
+```{r}
+v137 %>% 
+  save_data("v137")
+```
+
+
+# v141 - Residential Segregation – Black/White
+- TODO from scripts/v141_residential_segregation.qmd
+
+
+# v149 - DISCONNECTED YOUTH
+
+numerator =	number of people, ages 16-19, who are neither working nor in school
+denominator	= total county population, ages 16-19
+raw_value	= Percentage of teens and young adults ages 16-19 who are neither working nor in school
+
+
+```{r}
+
+numerator <- expr(B14005_010E + B14005_011E + B14005_014E + B14005_015E +
+           B14005_024E + B14005_025E + B14005_028E + B14005_029E)
+denominator <- expr(B14005_001E)
+
+x <- get_raw_table(2023, "B14005") %>%
+  standardize_fips() %>% 
+  add_flag_CT() %>%
+  # calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator, zero_max = FALSE) %>%
+  calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator) %>%
+  apply_suppression() %>%
+  mutate(sourceflag = NA) %>%
+  # could go inside apply_suppresion?
+  mutate(
+    rawvalue = case_when(
+      rawvalue == 0 ~ NA_real_,
+      rawvalue == 1 ~ NA_real_,
+      # standard error too high
+      sqrt(var) / rawvalue > 0.35 ~ NA_real_,
+      TRUE ~ rawvalue
+    )
+  ) %>%
+  mutate(across(c(numerator, denominator, cilow, cihigh), 
+                ~if_else(is.na(rawvalue), NA_real_, .x))) %>% 
+  add_col_prefix("v149")
+
+v149 <- x %>%
+  select(statecode, countycode, starts_with("v149"))
+
+```
+
+
+```{r}
+
+x1 <- read_csv("measure_datasets/v149_r2025.csv") %>%
+  arrange(statecode, countycode)
+
+waldo::compare(x1, v149, tolerance = 1e-4, list_as_map = TRUE)
+
+```
+
+
+# v153 - Homeownership
+
+Description: Percentage of owner-occupied housing units.
+
+Numerator: The numerator is the total number of owner-occupied housing units in a county.
+
+Denominator: The denominator is the total occupied housing units in a county.
+
+
+```{r}
+tabid <- "B25003"
+cat("National HTML table:", data_census_gov_url(ACS_YEAR, tabid))
+
+numerator <- expr(B25003_002E)
+denominator <- expr(B25003_001E)
+
+x <- get_raw_table(ACS_YEAR, tabid) %>%
+  standardize_fips() %>% 
+  add_flag_CT() %>%
+  calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator) %>%
+  apply_suppression() %>%
+  mutate(sourceflag = NA) %>%
+  add_col_prefix("v153")
+
+v153 <- x %>%
+  select(statecode, countycode, starts_with("v153"))
+
+```
+
+
+```{r}
+
+x1 <- read_csv("measure_datasets/v153_r2025.csv") %>%
+  arrange(statecode, countycode)
+
+waldo::compare(x1, v153, tolerance = 1e-4, list_as_map = TRUE)
+
+```
 
 
 # v168 - HIGH SCHOOL COMPLETION
@@ -116,288 +524,31 @@ numerator =	# Completed High School (Adults age 25 and over with a high school d
 denominator =	Population	(Adults age 25 and over)
 raw_value	= % Completed High School
 
-## var list
-```{r}
-var_ls_168 <- c('S1501_C01_014E', 'S1501_C01_014M',
-                'S1501_C01_006E', 'S1501_C01_006M')
-```
-
-
-```{r}
-table_file_names %>%
-  pull(Name) %>%
-  basename() %>%
-  str_extract("-(.+)\\.dat", group = 1) %>%
-  str_sub(1, 2) %>% table()
-```
-
-## process data
-```{r}
-hs_completion <- acs5 %>% 
-  select(1:3, all_of(var_ls_168)) %>% 
-  rename(numerator = S1501_C01_014E, 
-         denominator = S1501_C01_006E) %>% 
-  mutate(se_num_square = S1501_C01_014M**2,
-         se_denom_square = S1501_C01_006M**2) %>% 
-  glimpse()
-
-hs_completion_2 <- hs_completion %>% 
-  compute_se_ci()
-
-standard_cols <- c('statecode', 'countycode', 'numerator', 'denominator',
-                   'rawvalue', 'cilow', 'cihigh', 'sourceflag')
-
-hs_completion_3 <- hs_completion_2 %>% 
-  select(all_of(standard_cols))
-```
-
-
-# tidycensus test
-
-```{r}
-.libPaths()
-
-```
 
 ```{r}
 
-library(tidycensus)
+numerator <- expr(S1501_C01_014E)
+denominator <- expr(S1501_C01_006E)
 
+x <- get_raw_table(2023, "S1501") %>%
+  standardize_fips() %>% 
+  add_flag_CT() %>%
+  calc_acs_ratio(num_expr = !!numerator, den_expr = !!denominator) %>%
+  apply_suppression() %>%
+  mutate(sourceflag = NA_real_) %>%
+  add_col_prefix("v168")
 
-
+v168 <- x %>%
+  select(statecode, countycode, starts_with("v168"))
 
 ```
 
 
 ```{r}
-x <- get_acs(geography = "county", 
-              variables = c(medincome = "B19013_001"), 
-              state = "VT", 
-              year = 2024)
-x
+
+x1 <- read_csv("measure_datasets/v168_r2025.csv") %>%
+  arrange(statecode, countycode)
+
+waldo::compare(x1, v168, tolerance = 1e-4, list_as_map = TRUE)
 
 ```
-
-
-```{r}
-acs5_2024 <- load_variables(2024, "acs5", cache = TRUE)
-acs5s_2024 <- load_variables(2024, "acs5/subject", cache = TRUE)
-
-```
-
-
-```{r}
-var_ls_166 <- c('S2801_C01_014E', 'S2801_C01_014M',
-                'S2801_C01_001E', 'S2801_C01_001M')
-
-x <- get_acs(geography = "county", 
-              variables = var_ls_166, 
-              state = "VT", 
-              year = 2024)         
-
-acs5s_2024
-x %>%
-  left_join(acs5s_2024, join_by(variable == name))
-
-```
-
-
-# Census API
-
-
-```{r}
-
-
-```
-
-
-# v082	- Children in single-parent households	
-
-```{r}
-
-library(tidyverse)
-
-compute_se_ci <- function(df){
-  df %>% 
-    mutate(rawvalue = numerator/denominator,
-       se_num = (sqrt(se_num_square))/1.645,
-       se_denom = (sqrt(se_denom_square))/1.645) %>% 
-  mutate(se_test = se_num^2 - (rawvalue^2 * se_denom^2)) %>% 
-  mutate(se_pct = case_when(
-    se_test>=0 ~ sqrt(se_num**2 - (rawvalue^2 * se_denom^2))/denominator,
-    se_test< 0 ~ sqrt(se_num**2 + (rawvalue^2 * se_denom^2))/denominator
-  )) %>% 
-  mutate(cilow = rawvalue - se_pct*1.96, 
-         cihigh = rawvalue + se_pct*1.96,
-         sourceflag = NA_real_)
-}
-
-apply_suppression <-  function(df){
-  df %>% 
-  mutate(
-    cilow = case_when(cilow < 0 ~ 0,
-                      is.na(cihigh) ~ NA_real_,
-                      TRUE ~ cilow),
-    cihigh = case_when(cihigh > 1 ~  1, 
-                       is.na(cilow) ~ NA_real_,
-                       TRUE ~ cihigh)
-  )
-}
-
-standard_cols <- c('statecode', 'countycode', 'numerator', 'denominator',
-                   'rawvalue', 'cilow', 'cihigh', 'sourceflag')
-
-
-standardize_col_names <- function(df, col_prefix){
-  res <- df %>% 
-    rename(
-           !!(paste0(col_prefix, "_rawvalue")) := rawvalue, 
-           !!(paste0(col_prefix, "_numerator")) := numerator,
-           !!(paste0(col_prefix, "_denominator")) := denominator,
-           !!(paste0(col_prefix, "_cilow")) := cilow,
-           !!(paste0(col_prefix, "_cihigh")) := cihigh,
-           !!(paste0(col_prefix, "_sourceflag")) := sourceflag
-           )
-  return(res)
-}
-
-var_ls_082 <- c('B09005_001E', 'B09005_004E', 'B09005_005E', 
-                'B09005_001M', 'B09005_004M', 'B09005_005M')
-
-proc_wide <- function(wide_df) {
-  wide_df %>%
-    mutate(numerator = B09005_004E + B09005_005E, 
-          denominator = B09005_001E,
-          se_num_square = B09005_004M**2 + B09005_005M**2,
-          se_denom_square = B09005_001M**2) %>% 
-    compute_se_ci() %>%
-    apply_suppression() %>%
-    select(all_of(standard_cols)) %>%
-    standardize_col_names("v082")
-}
-
-v082 <- list()
-
-```
-
-
-## CHRR
-
-```{r}
-v082$chrr %>%
-  filter(countycode == "000", statecode != "00") %>%
-  tail()
-```
-
-```{r}
-
-v082$chrr <- read_csv("measure_datasets/v082_r2025.csv")
-
-```
-
-## tidycensus
-
-
-```{r}
-
-library(tidycensus)
-
-raw_tc <- get_acs(geography = "county", variables = var_ls_082, year = 2023)
-
-wide_tc <- raw_tc %>%
-  mutate(statecode = str_sub(GEOID, 1, 2), countycode = str_sub(GEOID, 3, 5)) %>%
-  select(statecode, countycode, variable, E = estimate, M = moe) %>%
-  pivot_longer(c(E, M)) %>%
-  mutate(name = paste0(variable, name)) %>%
-  pivot_wider(id_cols = c(statecode, countycode))
-
-
-v082$tc <- wide_tc %>%
-  proc_wide()
-
-```
-
-
-## Census API
-
-```{r}
-library(httr2)
-
-url <- "https://api.census.gov/data/2023/acs/acs5?get=group(B09005)&for=county:*"
-
-raw_api <- request(url) %>%
-  req_perform() %>%
-  resp_body_json(simplifyVector = FALSE)
-
-wide_api <- raw_api[-1] %>%
-  lapply(\(x) setNames(x, raw[[1]])) %>%
-  bind_rows() %>%
-  select(statecode = state, countycode = county, all_of(var_ls_082)) %>%
-  type_convert()
-
-v082$api <- wide_api %>%
-  proc_wide()
-
-
-```
-
-## FTP summary file
-
-
-```{r}
-raw_ftp <- util$get_file(
-    "data/raw/acsdt5y2023-b09005.dat",
-    "https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b09005.dat"
-  ) %>%
-  read_delim(
-    delim = "|",
-    col_types = list(GEO_ID = "c", .default = "d")
-  )
-
-wide_ftp <- raw_ftp %>%
-  filter(str_sub(GEO_ID, 1, 3) == "050") %>%
-  mutate(statecode = str_sub(GEO_ID, 10, 11), countycode = str_sub(GEO_ID, 12, 14)) %>%
-  # B09005_E001 -> B09005_001E
-  rename_with(
-    \(x) paste0(substr(x, 1, 7), substr(x, 9, 11), substr(x, 8, 8)),
-    .cols = starts_with("B09005")) %>%
-  select(statecode, countycode, all_of(var_ls_082))
-
-v082$ftp <- wide_ftp %>%
-  proc_wide()
-
-```
-
-## compare
-
-```{r}
-v082_df <- v082 %>%
-  bind_rows(.id = "method") %>%
-  filter(countycode != "000")
-  
-v082_df %>%
-  arrange(statecode, countycode, method)
-
-v082_var <- v082_df %>%
-  summarize(across(where(is.numeric), \(x) max(x) - min(x)), .by = c(statecode, countycode))
-  
-v082_var %>%
-  skimr::skim()
-
-# sus
-v082_var %>%
-  filter(if_any(where(is.numeric), \(x) x > 0.1)) %>%
-  select(statecode, countycode) %>%
-  left_join(v082_df)
-
-
-```
-
-
-# formula
-
-
-```{r}
-
-```
-
