@@ -1,0 +1,82 @@
+---
+title: "UW S3 Storage test"
+format:
+  html:
+    author: Anton Babkin
+    date: today
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    code-fold: true
+    code-overflow: wrap
+    df-print: kable
+---
+
+# Libraries and S3 secrets
+
+
+```{r}
+library(tidyverse)
+library(aws.s3)
+
+```
+
+
+```{r}
+Sys.setenv(
+  AWS_S3_ENDPOINT = "s3.wisc.edu",
+  AWS_DEFAULT_REGION = "campus"
+)
+
+Sys.getenv(c("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"))
+```
+
+# Campus pool
+
+Need to be on campus network or VPN to access.
+
+```{r}
+bucketlist()
+
+get_bucket(bucket = "babkin-bucket-01")
+
+get_object("hello.txt", bucket = "babkin-bucket-01") %>%
+  rawToChar()
+
+put_object("create new text object from R", object = "hello_r.txt", bucket = "babkin-bucket-01")
+
+"https://campus.s3.wisc.edu/babkin-bucket-01/hello.txt" %>%
+  httr2::request() %>%
+  httr2::req_perform() %>%
+  httr2::resp_body_string()
+
+```
+
+# Web pool
+
+Can be outside of campus network.
+
+```{r}
+Sys.setenv(AWS_DEFAULT_REGION = "web")
+bucketlist()
+
+get_bucket("babkin-test-02-web")
+
+put_object(
+  what = "create new text object from R in Web pool bucket",
+  object = "hello_r_web.txt",
+  bucket = "babkin-test-02-web",
+  acl = "public-read"
+)
+
+get_object("hello_r_web.txt", bucket = "babkin-test-02-web") %>%
+  rawToChar()
+
+get_acl("hello_r_web.txt", bucket = "babkin-test-02-web") %>%
+  xml2::read_xml() %>%
+  xml2::as_list()
+
+# DO NOT RUN: put_acl without body argument re-PUTs the object, overwriting it's content with empty string
+# put_acl("hello_r_web.txt", bucket = "babkin-test-02-web", acl = "public-read")
+
+```
