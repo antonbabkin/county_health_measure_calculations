@@ -17,6 +17,7 @@ format:
 
 ```{r}
 library(tidyverse)
+library(arrow)
 library(aws.s3)
 
 ```
@@ -78,5 +79,138 @@ get_acl("hello_r_web.txt", bucket = "babkin-test-02-web") %>%
 
 # DO NOT RUN: put_acl without body argument re-PUTs the object, overwriting it's content with empty string
 # put_acl("hello_r_web.txt", bucket = "babkin-test-02-web", acl = "public-read")
+
+```
+
+
+# Caching of CHRR data
+
+New buckets can not be created programmatically with `aws.s3::put_bucket()`.
+Instead, create them in Cyberduck [docs](https://kb.wisc.edu/researchdata/134396#newBucket).
+
+
+```{r}
+Sys.setenv(AWS_DEFAULT_REGION = "web")
+
+bucket_name <- "chrr-s3-demo"
+stopifnot(bucket_name %in% bucketlist()$Bucket)
+
+get_bucket(bucket_name)
+
+```
+
+
+# Read parquet files directly from S3
+
+Upload example files: tracts for racial segregation variable (v141).
+
+```{r}
+tabid <- c("B11002A", "B11002B")
+file_path <- paste0("raw_data/ACS/2024/", tabid, "_tract.pq") %>%
+  set_names(c("w", "b"))
+file_path %>%
+  map_lgl(\(fp) {
+    # upload if does not exist
+    object_exists(fp, bucket_name) ||
+      put_object(
+        object = fp, # destination path in the bucket
+        file = fp, # local source file path
+        bucket = bucket_name,
+        acl = "public-read" # make public for credential-free access
+      )
+  })
+
+```
+
+S3 storage can be declared as `arrow::S3FileSystem`, and objects within it can be accessed with standard `arrow::open_dataset() ... collect()` workflow.
+Entire files are not downloaded to local disk, instead, only a requested subset is retreived.
+This is not very relevant for 5Mb files, but can be very efficient for larger datasets.
+
+```{r}
+
+fs <- S3FileSystem$create(
+  access_key = Sys.getenv("AWS_ACCESS_KEY_ID"),
+  secret_key = Sys.getenv("AWS_SECRET_ACCESS_KEY"),
+  scheme = "https",
+  endpoint_override = "web.s3.wisc.edu"
+)
+
+ds <- c("w", "b") %>%
+  set_names() %>%
+  map(\(race) {
+    open_dataset(
+      sources = file.path(bucket_name, file_path[race]),
+      filesystem = fs,
+      format = "parquet"
+    )
+  })
+
+# query data tables stored in S3 without downloading them to local disk
+x <- full_join(
+    ds$w %>%
+      filter(str_starts(ucgid, "1400000US55025")) %>%
+      select(NAME, ucgid, wht = B11002A_001E) %>%
+      collect(),
+    ds$b %>%
+      filter(str_starts(ucgid, "1400000US55025")) %>%
+      select(ucgid, blk = B11002B_001E) %>%
+      collect(),
+    by = "ucgid"
+  )
+  
+# dissimilarity index calculator from the v141 notebook
+calc_diss_index <- function(df) {
+  df %>%
+    # suppress counties with less than 100 black population
+    filter(sum(blk) >= 100) %>%
+    mutate(
+      gr_wht = sum(wht), # total white population in geographic group
+      gr_blk = sum(blk), # total black population in geographic group
+      tr_diss = abs(wht / gr_wht - blk / gr_blk) # dissimilarity in tract shares of white and black 
+    ) %>%
+    # index = (1/2) SUM|(b/B) - (w/W)| * 100)
+    summarize(
+      diss_index = 50 * sum(tr_diss, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(diss_index = replace_values(diss_index, 0 ~ NA))
+}
+
+# calculate for Dane, WI dataset queried from S3
+x %>%
+  calc_diss_index()
+
+# compare with previously calculated value in Dane, WI
+read_csv("measure_datasets/v141_r2026.csv") %>%
+  filter(fipscode == "55025")
+
+```
+
+
+# Access public S3 objects without credentials
+
+
+```{r}
+
+fs_pub <- S3FileSystem$create(
+  anonymous = TRUE,
+  scheme = "https",
+  endpoint_override = "web.s3.wisc.edu"
+)
+
+ds_pub <- c("w", "b") %>%
+  set_names() %>%
+  map(\(race) {
+    open_dataset(
+      sources = file.path(bucket_name, file_path[race]),
+      filesystem = fs_pub,
+      format = "parquet"
+    )
+  })
+
+ds_pub$b %>%
+  head() %>%
+  select(ucgid, NAME, ends_with("E")) %>%
+  collect()
 
 ```
