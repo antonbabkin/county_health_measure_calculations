@@ -214,3 +214,125 @@ ds_pub$b %>%
   collect()
 
 ```
+
+
+# Bigger file performance
+
+In this experiment I compare the time it takes to query a (2875, 3) subset from a synthetic (2039111, 51) test parquet dataset with two methods:
+
+1. Download the file and query from disk.
+2. Query directly from S3 using arrow filesystem.
+
+The second method should obviously be faster, and this experiment demonstrates the difference.
+Every run is repeated 10 times.
+
+Results:
+
+1. Full download mean (median) time 35 (32) seconds.
+2. S3 query mean (median) time 4 (2.3) seconds.
+
+
+```{r}
+bucket_name <- "chrr-s3-demo"
+bigger_file <- "temp/bigger.pq"
+
+# repeat the dataframe to make about 2M rows, 100Mb parquet file
+x <- read_parquet("raw_data/ACS/2024/B11002A_tract.pq")
+x <- (1:23) %>%
+  map(\(x1) x) %>%
+  bind_rows()
+dim(x)
+
+dir.create("temp")
+write_parquet(x, bigger_file)
+file.size(bigger_file)
+
+put_object(object = bigger_file, file = bigger_file, bucket = bucket_name)
+
+get_bucket_df(bucket_name) %>%
+  select(Key, Size)
+
+```
+
+
+## download + query
+
+```
+   user.self sys.self elapsed
+       <dbl>    <dbl>   <dbl>
+ 1      1.75    0.387    9.63
+ 2      2.70    1.28    55.0 
+ 3      2.35    1.09    39.3 
+ 4      2.09    0.802   26.5 
+ 5      2.08    0.765   24.6 
+ 6      2.29    0.900   29.0 
+ 7      2.25    1.08    31.2 
+ 8      2.32    0.923   33.0 
+ 9      2.70    1.51    64.5 
+10      2.40    1.19    41.3 
+```
+
+```{r}
+t_local <- (1:10) %>%
+  map(\(x) system.time({
+    local_file <- tempfile(fileext = ".pq")
+
+    save_object(bigger_file, bucket_name, file = local_file, show_progress = TRUE)
+    if (file.size(local_file) != file.size(bigger_file)) 
+      warning("downloaded file wrong size ", file.size(local_file))
+
+    x_local <- local_file %>%
+      open_dataset(format = "parquet") %>%
+      filter(str_starts(ucgid, "1400000US55025")) %>%
+      select(NAME, ucgid, wht = B11002A_001E) %>%
+      collect()
+  })) %>%
+  bind_rows() %>%
+  # strip column attributes
+  mutate(across(everything(), c))
+
+t_local
+t_local %>% summary()
+```
+
+
+## query from S3
+
+```
+   user.self sys.self elapsed
+       <dbl>    <dbl>   <dbl>
+ 1     0.685   0.164     2.49
+ 2     0.670   0.0900    2.20
+ 3     0.671   0.0640    2.60
+ 4     0.692   0.0600    2.33
+ 5     0.642   0.0440    2.34
+ 6     0.642   0.0350    2.14
+ 7     0.858   0.123    11.0 
+ 8     0.891   0.125    10.8 
+ 9     0.686   0.0350    2.15
+10     0.641   0.0450    1.99
+```
+
+```{r}
+
+t_remote <- (1:10) %>%
+  map(\(x) system.time({
+    fs <- S3FileSystem$create(
+      access_key = Sys.getenv("AWS_ACCESS_KEY_ID"),
+      secret_key = Sys.getenv("AWS_SECRET_ACCESS_KEY"),
+      scheme = "https",
+      endpoint_override = "web.s3.wisc.edu")
+
+    x_remote <- file.path(bucket_name, bigger_file) %>%
+      open_dataset(filesystem = fs, format = "parquet") %>%
+      filter(str_starts(ucgid, "1400000US55025")) %>%
+      select(NAME, ucgid, wht = B11002A_001E) %>%
+      collect()
+  })) %>%
+  bind_rows() %>%
+  # strip column attributes
+  mutate(across(everything(), c))
+
+t_remote
+t_remote %>% summary()
+```
