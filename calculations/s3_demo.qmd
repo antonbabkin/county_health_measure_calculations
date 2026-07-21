@@ -336,3 +336,28 @@ t_remote <- (1:10) %>%
 t_remote
 t_remote %>% summary()
 ```
+
+
+# Shiny app
+
+Upload data: long commute ACS table S0802.
+
+```{r}
+Sys.setenv(AWS_DEFAULT_REGION = "web")
+bucket_name <- "chrr-s3-demo"
+stopifnot(bucket_name %in% bucketlist()$Bucket)
+get_bucket(bucket_name)
+
+fp <- "raw_data/ACS/2024/S0802.pq"
+df <- read_parquet(fp)
+put_object(object = fp, file = fp, bucket = bucket_name, acl = "public-read")
+df
+
+fp <- "raw_data/ACS/2024_vars_S.pq"
+put_object(object = fp, file = fp, bucket = bucket_name, acl = "public-read")
+
+read_parquet("raw_data/ACS/2024_vars_S.pq") %>%
+  filter(variable %in% variable_choices) %>%
+  select(variable, label) %>%
+  arrange(variable)
+```
